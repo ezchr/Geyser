@@ -64,17 +64,47 @@ import java.util.function.Function;
 public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLevelParticlesPacket> {
     private static final int MAX_PARTICLES = 100;
 
+    // ZID: per player, one particle type at one block spawns at most every SPOT_GAP_MS (bursts
+    // every BURST_GAP_MS). Command blocks and trails send particles every tick, and Bedrock's live
+    // several times longer than Java's, so the same stream piled up into a dense cloud.
+    private static final long SPOT_GAP_MS = 250;
+    private static final long BURST_GAP_MS = 500;
+    private static final java.util.Map<GeyserSession, java.util.Map<Long, Long>> LAST_SPAWN =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /** True if this particle may spawn here now for this player (and records it). */
+    private static boolean spotFree(GeyserSession session, Particle particle, double x, double y, double z, boolean burst) {
+        long key = ((long) particle.getType().ordinal() << 48)
+                ^ ((long) Math.floor(x) * 73856093L) ^ ((long) Math.floor(y) * 19349663L) ^ ((long) Math.floor(z) * 83492791L);
+        long now = System.currentTimeMillis();
+        java.util.Map<Long, Long> seen = LAST_SPAWN.computeIfAbsent(session, k -> new java.util.HashMap<>());
+        synchronized (seen) {
+            if (seen.size() > 4096) seen.clear();
+            Long last = seen.get(key);
+            if (last != null && now - last < (burst ? BURST_GAP_MS : SPOT_GAP_MS)) return false;
+            seen.put(key, now);
+            return true;
+        }
+    }
+
     @Override
     public void translate(GeyserSession session, ClientboundLevelParticlesPacket packet) {
         Function<Vector3f, BedrockPacket> particleCreateFunction = createParticle(session, packet.getParticle());
         if (particleCreateFunction != null) {
+            if (!spotFree(session, packet.getParticle(), packet.getX(), packet.getY(), packet.getZ(), isBurst(packet.getParticle()))) {
+                return;
+            }
             if (packet.getAmount() == 0) {
                 // 0 means don't apply the offset
                 Vector3f position = Vector3f.from(packet.getX(), packet.getY(), packet.getZ());
                 session.sendUpstreamPacket(particleCreateFunction.apply(position));
             } else {
                 Random random = ThreadLocalRandom.current();
+                // ZID: Bedrock particles are bigger and longer-lived than Java's, and emitter /
+                // level-event ones are whole bursts: the same count looked many times denser on
+                // Bedrock. Bursts are sent once, the rest at a quarter of the count.
                 int amount = Math.min(MAX_PARTICLES, packet.getAmount());
+                amount = isBurst(packet.getParticle()) ? 1 : Math.max(1, (amount + 3) / 4);
                 for (int i = 0; i < amount; i++) {
                     double offsetX = random.nextGaussian() * (double) packet.getOffsetX();
                     double offsetY = random.nextGaussian() * (double) packet.getOffsetY();
@@ -302,6 +332,14 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
                 }
             }
         }
+    }
+
+    /** A Java particle Geyser shows as a Bedrock emitter or level event: one packet is a burst. */
+    private static boolean isBurst(Particle particle) {
+        ParticleMapping mapping = Registries.PARTICLES.get(particle.getType());
+        if (mapping == null) return false;
+        if (mapping.levelEventType() != null) return true;
+        return mapping.identifier() != null && mapping.identifier().contains("emitter");
     }
 
     private static String colorMolang(float red, float green, float blue) {
