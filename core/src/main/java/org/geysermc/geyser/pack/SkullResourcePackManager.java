@@ -186,11 +186,7 @@ public class SkullResourcePackManager {
             }
 
             addFloorGeometries(zipOS);
-
-            ZipEntry entry = new ZipEntry("skull_resource_pack/pack_icon.png");
-            zipOS.putNextEntry(entry);
-            zipOS.write(FileUtils.readAllBytes("assets/geyser/icon.png"));
-            zipOS.closeEntry();
+            // ZID: no pack_icon.png - it was ~110 KB of the download, for an icon nobody sees
         }
     }
 
