@@ -133,6 +133,16 @@ public class BlockBreakHandler {
     protected Vector3i lastMinedPosition = null;
 
     /**
+     * ZID: the block the player is holding the mine button on, until they let go (ABORT_BREAK).
+     * When Geyser breaks blocks itself (custom tool or custom block: the client's own mining speed
+     * is 0, so it never reports finishing), the client says nothing more after the first block -
+     * as far as it knows it is still mining. A generator putting the block back would then never
+     * be mined; tick() starts on it again instead, like a Java client holding the button.
+     */
+    protected @Nullable Vector3i heldPos = null;
+    protected @Nullable Direction heldFace = null;
+
+    /**
      * Caches all blocks we had to restore e.g. due to out-of-range or being unable to mine
      * in order to avoid duplicate corrections.
      */
@@ -184,7 +194,25 @@ public class BlockBreakHandler {
         // Check lastBlockBreakFace, currentBlockPos and currentBlockState, just in case
         if (currentBlockFace != null && currentBlockPos != null && currentBlockState != null) {
             handleContinueDestroy(currentBlockPos, getCurrentBlockState(currentBlockPos), currentBlockFace, false, false, session.getClientTicks());
+        } else if (currentBlockPos == null && heldPos != null && heldFace != null) {
+            // ZID: still holding the button on a spot where a block is back (a generator) - mine it
+            BlockState held = getCurrentBlockState(heldPos);
+            if (!held.is(Blocks.AIR) && geyserMines(held, session.getPlayerInventory().getItemInHand())
+                    && canBreak(heldPos, held, org.cloudburstmc.protocol.bedrock.data.PlayerActionType.START_BREAK)) {
+                this.lastMinedPosition = null;
+                handleStartBreak(heldPos, held, heldFace, tick);
+            }
         }
+    }
+
+    /** ZID: whether Geyser (not the client) does the breaking for this block with this item. */
+    private boolean geyserMines(BlockState state, GeyserItemStack item) {
+        ItemMapping mapping = item.getMapping(session);
+        ItemDefinition customItem = item.has(DataComponentTypes.TOOL) ? CustomItemTranslator.getCustomItem(session, item.getAmount(), item.getAllComponents(), mapping) : null;
+        return BlockRegistries.NON_VANILLA_BLOCK_IDS.get().get(state.javaId())
+            || BlockRegistries.CUSTOM_BLOCK_STATE_OVERRIDES.get(state.javaId()) != null
+            || customItem != null
+            || session.getItemMappings().getNonVanillaCustomItemIds().contains(item.getJavaId());
     }
 
     protected void handleBlockBreakActions(PlayerAuthInputPacket packet) {
@@ -203,6 +231,8 @@ public class BlockBreakHandler {
                 case START_BREAK -> {
                     // New block being broken -> ignore previously mined position since that's no longer relevant
                     this.lastMinedPosition = null;
+                    this.heldPos = position;
+                    this.heldFace = Direction.getUntrusted(actionData, PlayerBlockActionData::getFace);
 
                     if (testForItemFrameEntity(position) || abortDueToBlockRestoring(position)) {
                         continue;
@@ -222,6 +252,8 @@ public class BlockBreakHandler {
                     handleStartBreak(position, state, Direction.getUntrusted(actionData, PlayerBlockActionData::getFace), packet.getTick());
                 }
                 case BLOCK_CONTINUE_DESTROY -> {
+                    this.heldPos = position;
+                    this.heldFace = Direction.getUntrusted(actionData, PlayerBlockActionData::getFace);
                     if (testForItemFrameEntity(position) || testForLastBreakPosOrReset(position) || abortDueToBlockRestoring(position)) {
                         continue;
                     }
@@ -284,6 +316,7 @@ public class BlockBreakHandler {
                     handlePredictDestroy(position, state, Direction.getUntrusted(actionData, PlayerBlockActionData::getFace), packet.getTick());
                 }
                 case ABORT_BREAK -> {
+                    this.heldPos = null;
                     // Also handles item frame interactions in adventure mode
                     if (testForItemFrameEntity(position)) {
                         continue;
@@ -587,7 +620,14 @@ public class BlockBreakHandler {
      */
     protected boolean testForLastBreakPosOrReset(Vector3i position) {
         if (Objects.equals(lastMinedPosition, position)) {
-            return true;
+            // ZID: a generator can put the block back where it was just mined. While it's still air
+            // these are leftover actions for the broken block; once a block is there again it is a
+            // new block to mine (Java clients just keep mining it when holding the button).
+            if (getCurrentBlockState(position).is(Blocks.AIR)) {
+                return true;
+            }
+            lastMinedPosition = null;
+            return false;
         }
         lastMinedPosition = null;
         return false;
@@ -605,7 +645,11 @@ public class BlockBreakHandler {
             return false;
         }
 
-        return Objects.equals(stack.getComponents(), currentItemStack.getComponents());
+        // ZID: comparing every component failed every tick for the server's custom tools (their data
+        // gets refreshed), which restarted the break each tick so it never finished. The same item
+        // type with the same model is the same tool; a different tool still restarts the break.
+        return Objects.equals(stack.getComponent(DataComponentTypes.ITEM_MODEL),
+            currentItemStack.getComponent(DataComponentTypes.ITEM_MODEL));
     }
 
     private @NonNull BlockState getCurrentBlockState(Vector3i position) {
