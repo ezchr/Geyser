@@ -28,6 +28,7 @@ package org.geysermc.geyser.translator.protocol.java;
 import org.geysermc.geyser.session.GeyserSession;
 import org.geysermc.geyser.translator.protocol.PacketTranslator;
 import org.geysermc.geyser.translator.protocol.Translator;
+import org.geysermc.mcprotocollib.protocol.data.ProtocolState;
 import org.geysermc.mcprotocollib.protocol.packet.common.clientbound.ClientboundKeepAlivePacket;
 import org.geysermc.mcprotocollib.protocol.packet.common.serverbound.ServerboundKeepAlivePacket;
 
@@ -44,7 +45,20 @@ public class JavaKeepAliveTranslator extends PacketTranslator<ClientboundKeepAli
         }
 
         final long javaId = packet.getPingId();
+        // ZID: the Bedrock client doesn't answer latency packets on the loading screen, and the replies come back
+        // in arrival order, so a forwarded keepalive could reach the server after the connection changed state and
+        // get the player kicked ("keepalive response without matching challenge"). Answer straight away until the
+        // player has spawned, and drop a forwarded answer whose connection state changed since.
+        if (!session.isSpawned() || session.getDownstream() == null) {
+            session.sendDownstreamPacket(new ServerboundKeepAlivePacket(javaId));
+            return;
+        }
+        final ProtocolState state = session.getDownstream().getSession().getPacketProtocol().getOutboundState();
         // ClientboundKeepAlivePacket's are async, hence we won't add additional delay ensuring it's sent in the event loop would add
-        session.sendNetworkLatencyStackPacket(javaId, false, () -> session.sendDownstreamPacket(new ServerboundKeepAlivePacket(javaId)));
+        session.sendNetworkLatencyStackPacket(javaId, false, () -> {
+            if (session.getDownstream() != null && session.getDownstream().getSession().getPacketProtocol().getOutboundState() == state) {
+                session.sendDownstreamPacket(new ServerboundKeepAlivePacket(javaId));
+            }
+        });
     }
 }
