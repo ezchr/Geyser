@@ -72,21 +72,85 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
     private static final java.util.Map<GeyserSession, java.util.Map<Long, Long>> LAST_SPAWN =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
-    // ZID: Bedrock draws these as long-lived bursts; as trails (a puff every half block walked) they
-    // piled up far denser than on Java. One per 600 ms in a 3-block area, a single particle each.
-    private static final long HEAVY_GAP_MS = 600;
+    // ZID: Bedrock particle limits come from zid_particles.json in the Geyser folder, re-read within
+    // ~2 s of a change (no restart). "default" applies to every particle, "burst" to emitter/level-event
+    // ones, "particles" overrides single types (Java particle names, e.g. TRIAL_SPAWNER_DETECTED_PLAYER).
+    // Fields: gap_ms (minimum time between puffs from one spot), cell (spot size in blocks),
+    // count_percent (share of the Java count kept, at least 1), max_count (cap per puff).
+    record Limit(long gapMs, double cell, int countPercent, int maxCount) {
+        Limit with(com.google.gson.JsonObject o) {
+            if (o == null) return this;
+            return new Limit(o.has("gap_ms") ? o.get("gap_ms").getAsLong() : gapMs,
+                    o.has("cell") ? Math.max(0.25, o.get("cell").getAsDouble()) : cell,
+                    o.has("count_percent") ? o.get("count_percent").getAsInt() : countPercent,
+                    o.has("max_count") ? o.get("max_count").getAsInt() : maxCount);
+        }
 
-    private static boolean heavy(Particle particle) {
-        return switch (particle.getType()) {
-            case TRIAL_SPAWNER_DETECTED_PLAYER, TRIAL_SPAWNER_DETECTED_PLAYER_OMINOUS, TRIAL_OMEN -> true;
-            default -> false;
-        };
+        int amount(int javaAmount) {
+            int n = Math.max(1, (int) Math.ceil(javaAmount * countPercent / 100.0));
+            return maxCount > 0 ? Math.min(n, maxCount) : n;
+        }
+    }
+
+    private static final String DEFAULT_LIMITS = """
+            {
+              "_help": "Bedrock particle limits, applied within 2 seconds of saving (no restart). default = every particle, burst = emitter/level-event ones, particles = single Java particle types. gap_ms = minimum time between puffs from one spot, cell = spot size in blocks, count_percent = share of the Java count kept (at least 1), max_count = cap per puff (0 = none).",
+              "default": {"gap_ms": 250, "cell": 1, "count_percent": 25, "max_count": 0},
+              "burst": {"gap_ms": 500, "cell": 1, "count_percent": 100, "max_count": 1},
+              "particles": {
+                "TRIAL_SPAWNER_DETECTED_PLAYER": {"gap_ms": 600, "cell": 3, "max_count": 1},
+                "TRIAL_SPAWNER_DETECTED_PLAYER_OMINOUS": {"gap_ms": 600, "cell": 3, "max_count": 1},
+                "TRIAL_OMEN": {"gap_ms": 600, "cell": 3, "max_count": 1}
+              }
+            }
+            """;
+    private static volatile Limit DEFAULT_LIMIT = new Limit(250, 1, 25, 0);
+    private static volatile Limit BURST_LIMIT = new Limit(500, 1, 100, 1);
+    private static volatile java.util.Map<String, Limit> TYPE_LIMITS = java.util.Map.of();
+    private static volatile long limitsCheckedAt;
+    private static volatile long limitsModified = -1;
+
+    private static synchronized void reloadLimitsIfChanged() {
+        long now = System.currentTimeMillis();
+        if (now - limitsCheckedAt < 2000) return;
+        limitsCheckedAt = now;
+        try {
+            java.nio.file.Path f = org.geysermc.geyser.GeyserImpl.getInstance().getBootstrap().getConfigFolder().resolve("zid_particles.json");
+            if (!java.nio.file.Files.exists(f)) java.nio.file.Files.writeString(f, DEFAULT_LIMITS);
+            long mod = java.nio.file.Files.getLastModifiedTime(f).toMillis();
+            if (mod == limitsModified) return;
+            limitsModified = mod;
+            com.google.gson.JsonObject o = com.google.gson.JsonParser.parseString(java.nio.file.Files.readString(f)).getAsJsonObject();
+            Limit def = new Limit(250, 1, 25, 0).with(o.getAsJsonObject("default"));
+            Limit burst = new Limit(500, 1, 100, 1).with(o.getAsJsonObject("burst"));
+            java.util.Map<String, Limit> types = new java.util.HashMap<>();
+            com.google.gson.JsonObject parts = o.getAsJsonObject("particles");
+            if (parts != null) {
+                for (var e : parts.entrySet()) {
+                    types.put(e.getKey().toUpperCase(java.util.Locale.ROOT), (e.getValue().isJsonObject() ? def : def).with(e.getValue().getAsJsonObject()));
+                }
+            }
+            DEFAULT_LIMIT = def;
+            BURST_LIMIT = burst;
+            TYPE_LIMITS = types;
+            org.geysermc.geyser.GeyserImpl.getInstance().getLogger().info("Particle limits loaded from zid_particles.json (" + types.size() + " particle overrides)");
+        } catch (Exception e) {
+            org.geysermc.geyser.GeyserImpl.getInstance().getLogger().warning("zid_particles.json not applied: " + e.getMessage());
+        }
+    }
+
+    /** The limit for this particle: its own entry, else burst or default. */
+    private static Limit limit(Particle particle) {
+        reloadLimitsIfChanged();
+        Limit own = TYPE_LIMITS.get(particle.getType().name());
+        if (own != null) return own;
+        return isBurst(particle) ? BURST_LIMIT : DEFAULT_LIMIT;
     }
 
     /** True if this particle may spawn here now for this player (and records it). */
     private static boolean spotFree(GeyserSession session, Particle particle, double x, double y, double z, boolean burst) {
-        boolean heavy = heavy(particle);
-        double cell = heavy ? 3 : 1;
+        Limit lim = limit(particle);
+        double cell = lim.cell();
         long key = ((long) particle.getType().ordinal() << 48)
                 ^ ((long) Math.floor(x / cell) * 73856093L) ^ ((long) Math.floor(y / cell) * 19349663L) ^ ((long) Math.floor(z / cell) * 83492791L);
         long now = System.currentTimeMillis();
@@ -94,7 +158,7 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
         synchronized (seen) {
             if (seen.size() > 4096) seen.clear();
             Long last = seen.get(key);
-            if (last != null && now - last < (heavy ? HEAVY_GAP_MS : burst ? BURST_GAP_MS : SPOT_GAP_MS)) return false;
+            if (last != null && now - last < lim.gapMs()) return false;
             seen.put(key, now);
             return true;
         }
@@ -117,7 +181,7 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
                 // level-event ones are whole bursts: the same count looked many times denser on
                 // Bedrock. Bursts are sent once, the rest at a quarter of the count.
                 int amount = Math.min(MAX_PARTICLES, packet.getAmount());
-                amount = isBurst(packet.getParticle()) || heavy(packet.getParticle()) ? 1 : Math.max(1, (amount + 3) / 4);
+                amount = limit(packet.getParticle()).amount(amount);
                 for (int i = 0; i < amount; i++) {
                     double offsetX = random.nextGaussian() * (double) packet.getOffsetX();
                     double offsetY = random.nextGaussian() * (double) packet.getOffsetY();
