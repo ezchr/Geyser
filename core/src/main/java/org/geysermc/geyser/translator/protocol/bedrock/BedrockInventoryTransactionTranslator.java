@@ -312,6 +312,20 @@ public class BedrockInventoryTransactionTranslator extends PacketTranslator<Inve
                                 sequence);
                         session.sendDownstreamGamePacket(blockPacket);
 
+                        // ZID: Bedrock never uses the offhand on a right-click. A Java client asks for the off hand
+                        // when the main hand did nothing, so do the same: the main hand is empty or holds nothing
+                        // with a right-click use, and the clicked block isn't one you use (unless sneaking).
+                        if (offhandUse(session, blockState)) {
+                            session.sendDownstreamGamePacket(new ServerboundUseItemOnPacket(
+                                    packet.getBlockPosition(),
+                                    Direction.getUntrusted(packet, InventoryTransactionPacket::getBlockFace).mcpl(),
+                                    Hand.OFF_HAND,
+                                    cursorX, cursorY, cursorZ,
+                                    false,
+                                    false,
+                                    session.getWorldCache().nextPredictionSequence()));
+                        }
+
                         Item item = session.getPlayerInventory().getItemInHand().asItem();
                         if (packet.getItemInHand() != null) {
                             ItemDefinition definition = packet.getItemInHand().getDefinition();
@@ -663,5 +677,27 @@ public class BedrockInventoryTransactionTranslator extends PacketTranslator<Inve
         } else {
             return value;
         }
+    }
+    /** ZID: whether a right-click on this block should also try the off hand (see the call site). */
+    private static boolean offhandUse(GeyserSession session, BlockState clicked) {
+        GeyserItemStack off = session.getPlayerInventory().getOffhand();
+        if (off.isEmpty()) return false;
+        if (!session.isSneaking() && (BlockRegistries.INTERACTIVE.get().get(clicked.javaId())
+                || BlockRegistries.INTERACTIVE_MAY_BUILD.get().get(clicked.javaId()))) {
+            return false;
+        }
+        GeyserItemStack main = session.getPlayerInventory().getItemInHand();
+        if (main.isEmpty()) return true;
+        Item item = main.asItem();
+        boolean mainUses = item instanceof org.geysermc.geyser.item.type.BlockItem
+                || item instanceof BoatItem || item instanceof SpawnEggItem
+                || item instanceof org.geysermc.geyser.item.type.ShieldItem
+                || item instanceof org.geysermc.geyser.item.type.CrossbowItem
+                || item == Items.BOW || item == Items.TRIDENT || item == Items.FISHING_ROD
+                || item == Items.FLINT_AND_STEEL || item == Items.BUCKET || item == Items.WATER_BUCKET || item == Items.LAVA_BUCKET
+                || main.has(org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponentTypes.CONSUMABLE)
+                // an OresPlus block item: paper with a model, placed by the plugin from the main hand
+                || (item == Items.PAPER && main.has(org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponentTypes.ITEM_MODEL));
+        return !mainUses;
     }
 }
