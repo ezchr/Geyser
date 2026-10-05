@@ -452,6 +452,10 @@ public class BedrockInventoryTransactionTranslator extends PacketTranslator<Inve
                         }
 
                         session.useItem(Hand.MAIN_HAND);
+                        // ZID: and the off hand, as a Java client does when the main hand has no use
+                        if (!session.getPlayerInventory().getOffhand().isEmpty() && !mainHandUses(session)) {
+                            session.useItem(Hand.OFF_HAND);
+                        }
 
                         session.getBundleCache().awaitRelease();
 
@@ -686,8 +690,13 @@ public class BedrockInventoryTransactionTranslator extends PacketTranslator<Inve
                 || BlockRegistries.INTERACTIVE_MAY_BUILD.get().get(clicked.javaId()))) {
             return false;
         }
+        return !mainHandUses(session);
+    }
+
+    /** ZID: whether the main-hand item does something on right-click itself (then the off hand waits). */
+    private static boolean mainHandUses(GeyserSession session) {
         GeyserItemStack main = session.getPlayerInventory().getItemInHand();
-        if (main.isEmpty()) return true;
+        if (main.isEmpty()) return false;
         Item item = main.asItem();
         boolean mainUses = item instanceof org.geysermc.geyser.item.type.BlockItem
                 || item instanceof BoatItem || item instanceof SpawnEggItem
@@ -698,6 +707,6 @@ public class BedrockInventoryTransactionTranslator extends PacketTranslator<Inve
                 || main.has(org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponentTypes.CONSUMABLE)
                 // an OresPlus block item: paper with a model, placed by the plugin from the main hand
                 || (item == Items.PAPER && main.has(org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponentTypes.ITEM_MODEL));
-        return !mainUses;
+        return mainUses;
     }
 }
