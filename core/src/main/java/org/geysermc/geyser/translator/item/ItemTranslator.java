@@ -670,10 +670,35 @@ public final class ItemTranslator {
         }
 
         Texture skinTexture = SkinManager.getTextureDataFromProfile(resolved, TextureType.SKIN);
-        if (skinTexture == null) {
-            return null;
+        CustomSkull skull = skinTexture == null ? null : BlockRegistries.CUSTOM_SKULLS.get(skinTexture.getHash());
+        if (skull == null && resolved.getId() != null) {
+            // ZID: the head's skin isn't in the head pack (the player changed skin since): show the
+            // skin they were registered with instead (zid_skull_fallbacks.json: uuid -> skin hash)
+            String hash = skullFallbacks().get(resolved.getId().toString());
+            if (hash != null) skull = BlockRegistries.CUSTOM_SKULLS.get(hash);
         }
-        return BlockRegistries.CUSTOM_SKULLS.get(skinTexture.getHash());
+        return skull;
+    }
+
+    private static volatile java.util.Map<String, String> SKULL_FALLBACKS;
+
+    /** ZID: player uuid -> the skin hash registered for them in the head pack. */
+    private static java.util.Map<String, String> skullFallbacks() {
+        java.util.Map<String, String> m = SKULL_FALLBACKS;
+        if (m == null) {
+            m = new java.util.HashMap<>();
+            try {
+                java.nio.file.Path f = org.geysermc.geyser.GeyserImpl.getInstance().getBootstrap().getConfigFolder().resolve("zid_skull_fallbacks.json");
+                if (java.nio.file.Files.exists(f)) {
+                    com.google.gson.JsonObject o = com.google.gson.JsonParser.parseString(java.nio.file.Files.readString(f)).getAsJsonObject();
+                    for (var e : o.entrySet()) m.put(e.getKey(), e.getValue().getAsString());
+                }
+            } catch (Exception e) {
+                org.geysermc.geyser.GeyserImpl.getInstance().getLogger().warning("zid_skull_fallbacks.json: " + e.getMessage());
+            }
+            SKULL_FALLBACKS = m;
+        }
+        return m;
     }
 
     private static void translatePlayerHead(GeyserSession session, ResolvableProfile profile, ItemData.Builder builder) {
