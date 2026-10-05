@@ -46,6 +46,8 @@ import static org.cloudburstmc.netty.channel.raknet.RakConstants.ID_OPEN_CONNECT
 @RequiredArgsConstructor
 public class RakConnectionRequestHandler extends ChannelInboundHandlerAdapter {
     public static final String NAME = "rak-connection-request-handler";
+    /** ZID: -DzidRaknetPingOnly=true keeps RakNet for server-list pings and turns away RakNet joins. */
+    private static final boolean PING_ONLY = Boolean.getBoolean("zidRaknetPingOnly");
 
     private final RaknetServer server;
 
@@ -80,6 +82,13 @@ public class RakConnectionRequestHandler extends ChannelInboundHandlerAdapter {
 
         if (!readableMagic) {
             ctx.fireChannelRead(msg);
+            return;
+        }
+
+        if (PING_ONLY) {
+            // ZID: RakNet only answers server-list pings here; players join over NetherNet
+            org.geysermc.geyser.GeyserImpl.getInstance().getLogger().info("Ignored a RakNet join from " + packet.sender() + " (RakNet is ping-only, -DzidRaknetPingOnly)");
+            buf.release();
             return;
         }
 
