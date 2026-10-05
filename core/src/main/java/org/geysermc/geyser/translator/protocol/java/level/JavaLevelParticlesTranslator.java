@@ -72,16 +72,29 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
     private static final java.util.Map<GeyserSession, java.util.Map<Long, Long>> LAST_SPAWN =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
+    // ZID: Bedrock draws these as long-lived bursts; as trails (a puff every half block walked) they
+    // piled up far denser than on Java. One per 600 ms in a 3-block area, a single particle each.
+    private static final long HEAVY_GAP_MS = 600;
+
+    private static boolean heavy(Particle particle) {
+        return switch (particle.getType()) {
+            case TRIAL_SPAWNER_DETECTED_PLAYER, TRIAL_SPAWNER_DETECTED_PLAYER_OMINOUS, TRIAL_OMEN -> true;
+            default -> false;
+        };
+    }
+
     /** True if this particle may spawn here now for this player (and records it). */
     private static boolean spotFree(GeyserSession session, Particle particle, double x, double y, double z, boolean burst) {
+        boolean heavy = heavy(particle);
+        double cell = heavy ? 3 : 1;
         long key = ((long) particle.getType().ordinal() << 48)
-                ^ ((long) Math.floor(x) * 73856093L) ^ ((long) Math.floor(y) * 19349663L) ^ ((long) Math.floor(z) * 83492791L);
+                ^ ((long) Math.floor(x / cell) * 73856093L) ^ ((long) Math.floor(y / cell) * 19349663L) ^ ((long) Math.floor(z / cell) * 83492791L);
         long now = System.currentTimeMillis();
         java.util.Map<Long, Long> seen = LAST_SPAWN.computeIfAbsent(session, k -> new java.util.HashMap<>());
         synchronized (seen) {
             if (seen.size() > 4096) seen.clear();
             Long last = seen.get(key);
-            if (last != null && now - last < (burst ? BURST_GAP_MS : SPOT_GAP_MS)) return false;
+            if (last != null && now - last < (heavy ? HEAVY_GAP_MS : burst ? BURST_GAP_MS : SPOT_GAP_MS)) return false;
             seen.put(key, now);
             return true;
         }
@@ -104,7 +117,7 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
                 // level-event ones are whole bursts: the same count looked many times denser on
                 // Bedrock. Bursts are sent once, the rest at a quarter of the count.
                 int amount = Math.min(MAX_PARTICLES, packet.getAmount());
-                amount = isBurst(packet.getParticle()) ? 1 : Math.max(1, (amount + 3) / 4);
+                amount = isBurst(packet.getParticle()) || heavy(packet.getParticle()) ? 1 : Math.max(1, (amount + 3) / 4);
                 for (int i = 0; i < amount; i++) {
                     double offsetX = random.nextGaussian() * (double) packet.getOffsetX();
                     double offsetY = random.nextGaussian() * (double) packet.getOffsetY();
