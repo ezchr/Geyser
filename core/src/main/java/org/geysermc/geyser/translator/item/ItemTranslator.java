@@ -143,6 +143,23 @@ public final class ItemTranslator {
                 itemStack.setComponents(components);
             }
         }
+        // ZID: a custom item coming back from Bedrock (e.g. taken from the creative menu) would
+        // otherwise be just its plain base item. Carry the item model it is mapped from, so the
+        // server can tell which custom item it is and rebuild it (OresPlus does this).
+        if (bedrockItem.getCustomItemDefinitions() != null
+                && session.getItemMappings().getCustomIdMappings().containsKey(data.getDefinition().getRuntimeId())) {
+            for (java.util.Map.Entry<Key, org.geysermc.geyser.item.GeyserCustomMappingData> e
+                    : bedrockItem.getCustomItemDefinitions().entries()) {
+                if (e.getValue().itemDefinition().equals(data.getDefinition())) {
+                    DataComponents components = itemStack.getOrCreateComponents();
+                    if (components.get(DataComponentTypes.ITEM_MODEL) == null) {
+                        components.put(DataComponentTypes.ITEM_MODEL, e.getKey());
+                        itemStack.setComponents(components);
+                    }
+                    break;
+                }
+            }
+        }
         return itemStack.getItemStack();
     }
 

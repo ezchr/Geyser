@@ -185,6 +185,21 @@ public class ItemMappings implements DefinitionRegistry<ItemDefinition> {
             }
         }
 
+        // ZID: a custom item (e.g. taken from the Bedrock creative menu) has its own runtime id, which
+        // no vanilla mapping above matches; without this it became air and vanished. Return the
+        // mapping of the Java item it is defined on - ItemTranslator then adds its item model.
+        for (ItemMapping mapping : this.items) {
+            var custom = mapping.getCustomItemDefinitions();
+            if (custom == null) {
+                continue;
+            }
+            for (org.geysermc.geyser.item.GeyserCustomMappingData d : custom.values()) {
+                if (d.itemDefinition().getRuntimeId() == definition.getRuntimeId()) {
+                    return mapping;
+                }
+            }
+        }
+
         GeyserImpl.getInstance().getLogger().debug("Missing mapping for bedrock item " + data);
         return ItemMapping.AIR;
     }
