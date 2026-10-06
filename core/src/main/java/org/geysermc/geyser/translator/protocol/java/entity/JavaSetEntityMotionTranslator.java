@@ -39,6 +39,11 @@ public class JavaSetEntityMotionTranslator extends PacketTranslator<ClientboundS
 
     @Override
     public void translate(GeyserSession session, ClientboundSetEntityMotionPacket packet) {
+        // ZID: remember knockback / pushes sent to the player themselves (see ZidSnapLog)
+        if (session.getPlayerEntity() != null && packet.getEntityId() == session.getPlayerEntity().getEntityId()) {
+            org.geysermc.geyser.zid.ZidSnapLog.motion(session);
+        }
+
         Entity entity = session.getEntityCache().getEntityByJavaId(packet.getEntityId());
         if (entity == null) return;
 

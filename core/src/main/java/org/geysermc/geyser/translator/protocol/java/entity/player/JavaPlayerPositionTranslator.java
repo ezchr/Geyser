@@ -123,6 +123,9 @@ public class JavaPlayerPositionTranslator extends PacketTranslator<ClientboundPl
         float lastPlayerPitch = entity.getPitch();
         float lastPlayerYaw = entity.getYaw();
         Vector3f teleportDestination = position.toFloat();
+        // ZID: rubber-banding investigation - every server move of this player
+        org.geysermc.geyser.zid.ZidSnapLog.teleport(session, lastPlayerPosition, teleportDestination,
+                "id=" + teleportId + " rel=" + packet.getRelatives().size());
 
         Vector3f deltaMovement = packet.getDeltaMovement().toFloat().add(
             packet.getRelatives().contains(PositionElement.DELTA_X) ? entity.getMotion().getX() : 0,
