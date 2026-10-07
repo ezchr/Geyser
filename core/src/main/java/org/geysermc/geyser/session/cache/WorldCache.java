@@ -71,6 +71,12 @@ public final class WorldCache {
 
     private int currentSequence;
     private final Object2IntMap<Vector3i> unverifiedPredictions = new Object2IntOpenHashMap<>(1);
+    // ZID: blocks the Bedrock client broke on its own screen (it hides them at once), by when the
+    // break was sent. If the server then has a block there again (a generator refilling it, or a
+    // refused break), Bedrock compares the update with its own world data, finds the same block and
+    // never redraws it: an invisible block you still collide with. A quick air update first makes
+    // it redraw.
+    private final it.unimi.dsi.fastutil.objects.Object2LongMap<Vector3i> clientBroken = new it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap<>(1);
 
     private final Map<Vector3i, String> activeRecords = new Object2ObjectOpenHashMap<>(1); // Assume the average player won't be listening to many records
     private final Object2LongMap<Vector3i> playingRecords = new Object2LongOpenHashMap<>(1) {
@@ -188,8 +194,29 @@ public final class WorldCache {
         }
     }
 
+    /** ZID: the Bedrock client broke the block at position (see clientBroken). */
+    public void markClientBroken(Vector3i position) {
+        this.clientBroken.put(position, System.currentTimeMillis());
+    }
+
+    /** ZID: sends air at position first if the client broke it moments ago and a block is back. */
+    private void redrawIfClientBroken(Vector3i position, org.geysermc.geyser.level.block.type.BlockState state) {
+        long at = this.clientBroken.removeLong(position);
+        if (at == 0 || System.currentTimeMillis() - at > 2000 || state.is(org.geysermc.geyser.level.block.Blocks.AIR)) {
+            return;
+        }
+        org.cloudburstmc.protocol.bedrock.packet.UpdateBlockPacket air = new org.cloudburstmc.protocol.bedrock.packet.UpdateBlockPacket();
+        air.setDataLayer(0);
+        air.setBlockPosition(position);
+        air.setDefinition(session.getBlockMappings().getBedrockAir());
+        air.getFlags().add(org.cloudburstmc.protocol.bedrock.packet.UpdateBlockPacket.Flag.NEIGHBORS);
+        air.getFlags().add(org.cloudburstmc.protocol.bedrock.packet.UpdateBlockPacket.Flag.NETWORK);
+        session.sendUpstreamPacket(air);
+    }
+
     public void updateServerCorrectBlockState(Vector3i position, int blockState) {
         this.unverifiedPredictions.removeInt(position);
+        redrawIfClientBroken(position, org.geysermc.geyser.level.block.type.BlockState.of(blockState));
 
         // Hack to avoid looking up blockstates for the currently broken position each tick
         Vector3i clientBreakPos = session.getBlockBreakHandler().getCurrentBlockPos();
@@ -216,7 +243,9 @@ public final class WorldCache {
                 // This block may be out of sync with the server
                 // In 1.19.0 Java, you can verify this by trying to mine in spawn protection
                 Vector3i position = entry.getKey();
-                ChunkUtils.updateBlockClientSide(session, session.getGeyser().getWorldManager().blockAt(session, position), position);
+                org.geysermc.geyser.level.block.type.BlockState state = session.getGeyser().getWorldManager().blockAt(session, position);
+                redrawIfClientBroken(position, state);
+                ChunkUtils.updateBlockClientSide(session, state, position);
                 it.remove();
             }
         }

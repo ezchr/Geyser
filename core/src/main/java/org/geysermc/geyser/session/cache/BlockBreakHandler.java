@@ -601,6 +601,7 @@ public class BlockBreakHandler {
         session.getWorldCache().markPositionInSequence(vector);
 
         if (canDestroyBlock(state)) {
+            session.getWorldCache().markClientBroken(vector); // ZID: see WorldCache.clientBroken
             BlockUtils.spawnBlockBreakParticles(session, direction, vector, state);
             BlockUtils.sendBedrockBlockDestroy(session, vector.toFloat(), state.javaId());
         } else {
