@@ -48,6 +48,7 @@ import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 
 @Getter
@@ -125,9 +126,21 @@ public final class BedrockClientData {
     @SerializedName(value = "ArmSize")
     private String armSize;
     @SerializedName(value = "SkinAnimationData")
-    private String skinAnimationData;
+    @JsonAdapter(value = StringToByteDeserializer.class)
+    private byte[] skinAnimationData;
     @SerializedName(value = "SkinColor")
     private String skinColor;
+    @SerializedName(value = "SkinGeometryDataEngineVersion")
+    @JsonAdapter(value = StringToByteDeserializer.class)
+    private byte[] geometryDataEngineVersion;
+    @SerializedName(value = "PlayFabId")
+    private String playFabId;
+    @SerializedName(value = "AnimatedImageData")
+    private List<AnimatedImage> animatedImageData;
+    @SerializedName(value = "PersonaPieces")
+    private List<PersonaPiece> personaPieces;
+    @SerializedName(value = "PieceTintColors")
+    private List<PieceTintColor> pieceTintColors;
     @SerializedName(value = "ThirdPartyNameOnly")
     private boolean thirdPartyNameOnly;
 
@@ -157,6 +170,45 @@ public final class BedrockClientData {
 
     public UiProfile getUiProfile() {
         return uiProfile != null ? uiProfile : UiProfile.CLASSIC;
+    }
+
+    @Getter
+    public static final class AnimatedImage {
+        @SerializedName(value = "Image")
+        @JsonAdapter(value = StringToByteDeserializer.class)
+        private byte[] image;
+        @SerializedName(value = "ImageWidth")
+        private int imageWidth;
+        @SerializedName(value = "ImageHeight")
+        private int imageHeight;
+        @SerializedName(value = "Type")
+        private int type;
+        @SerializedName(value = "Frames")
+        private float frames;
+        @SerializedName(value = "AnimationExpression")
+        private int animationExpression;
+    }
+
+    @Getter
+    public static final class PersonaPiece {
+        @SerializedName(value = "PieceId")
+        private String pieceId;
+        @SerializedName(value = "PieceType")
+        private String pieceType;
+        @SerializedName(value = "PackId")
+        private String packId;
+        @SerializedName(value = "IsDefault")
+        private boolean isDefault;
+        @SerializedName(value = "ProductId")
+        private String productId;
+    }
+
+    @Getter
+    public static final class PieceTintColor {
+        @SerializedName(value = "PieceType")
+        private String pieceType;
+        @SerializedName(value = "Colors")
+        private List<String> colors;
     }
 
     private static final class StringToByteDeserializer implements JsonDeserializer<byte[]> {

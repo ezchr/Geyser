@@ -28,7 +28,13 @@ package org.geysermc.geyser.skin;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.cloudburstmc.protocol.bedrock.data.skin.AnimatedTextureType;
+import org.cloudburstmc.protocol.bedrock.data.skin.AnimationData;
+import org.cloudburstmc.protocol.bedrock.data.skin.AnimationExpressionType;
 import org.cloudburstmc.protocol.bedrock.data.skin.ImageData;
+import org.cloudburstmc.protocol.bedrock.data.skin.PersonaPieceData;
+import org.cloudburstmc.protocol.bedrock.data.skin.PersonaPieceTintData;
+import org.cloudburstmc.protocol.bedrock.data.skin.PersonaPieceType;
 import org.cloudburstmc.protocol.bedrock.data.skin.SerializedSkin;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerListPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerSkinPacket;
@@ -52,6 +58,7 @@ import org.geysermc.mcprotocollib.protocol.data.game.entity.player.ResolvablePro
 
 import java.awt.*;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -105,7 +112,7 @@ public class SkinManager {
                 playerEntity.uuid(),
                 playerEntity.getUsername(),
                 playerEntity.geyserId(),
-                getSkin(session, skin.textureUrl(), skin, cape, geometry)
+                getSkin(session, playerEntity.uuid(), skin.textureUrl(), skin, cape, geometry)
         );
     }
 
@@ -121,7 +128,7 @@ public class SkinManager {
                 entity.uuid(),
                 entity.getUsername(),
                 entity.geyserId(),
-                getSkin(session, skin.textureUrl(), skin, cape, geometry)
+                getSkin(session, entity.uuid(), skin.textureUrl(), skin, cape, geometry)
             );
 
             // Slight delay ensures skins are actually shown
@@ -129,17 +136,22 @@ public class SkinManager {
                 PlayerListUtils.sendSkinUsingPlayerList(session, entry, entity, entity.isListed());
             }, 100, TimeUnit.MILLISECONDS);
         } else {
+            SerializedSkin serializedSkin = getSkin(session, entity.uuid(), skin.textureUrl(), skin, cape, geometry);
             PlayerSkinPacket packet = new PlayerSkinPacket();
             packet.setUuid(entity.uuid());
             packet.setOldSkinName("");
-            packet.setNewSkinName(skin.textureUrl());
-            packet.setSkin(getSkin(session, skin.textureUrl(), skin, cape, geometry));
+            packet.setNewSkinName(serializedSkin.getSkinId());
+            packet.setSkin(serializedSkin);
             packet.setTrustedSkin(true);
             session.sendUpstreamPacket(packet);
         }
     }
 
-    private static SerializedSkin getSkin(GeyserSession session, String skinId, Skin skin, Cape cape, SkinGeometry geometry) {
+    private static SerializedSkin getSkin(GeyserSession session, UUID uuid, String skinId, Skin skin, Cape cape, SkinGeometry geometry) {
+        SerializedSkin personaSkin = personaSkin(uuid);
+        if (personaSkin != null) {
+            return personaSkin;
+        }
         return SerializedSkin.builder()
             .skinId(skinId)
             .skinResourcePatch(geometry.geometryName())
@@ -155,6 +167,106 @@ public class SkinManager {
             .trusted(true)
             .profileHash("") // TODO Look into this, the session sends it, so it's probably important for skins to work correctly
             .build();
+    }
+
+    /**
+     * Builds the persona skin a Bedrock player on this Geyser instance logged in with. Its Java texture does not
+     * fit the persona geometry, so Bedrock players are sent the original skin instead.
+     *
+     * @return the skin, or null if the player is not on this instance or has no persona skin
+     */
+    private static @Nullable SerializedSkin personaSkin(UUID uuid) {
+        GeyserSession owner = GeyserImpl.getInstance().connectionByUuid(uuid);
+        if (owner == null || !owner.getClientData().isPersonaSkin()) {
+            return null;
+        }
+        BedrockClientData data = owner.getClientData();
+        try {
+            List<AnimationData> animations = new ArrayList<>();
+            if (data.getAnimatedImageData() != null) {
+                for (BedrockClientData.AnimatedImage image : data.getAnimatedImageData()) {
+                    animations.add(new AnimationData(
+                        ImageData.of(image.getImageWidth(), image.getImageHeight(), image.getImage()),
+                        AnimatedTextureType.values()[image.getType()],
+                        image.getFrames(),
+                        AnimationExpressionType.values()[image.getAnimationExpression()]
+                    ));
+                }
+            }
+
+            List<PersonaPieceData> pieces = new ArrayList<>();
+            if (data.getPersonaPieces() != null) {
+                for (BedrockClientData.PersonaPiece piece : data.getPersonaPieces()) {
+                    pieces.add(new PersonaPieceData(piece.getPieceId(), personaPieceType(piece.getPieceType()),
+                        UUID.fromString(piece.getPackId()), piece.isDefault(), Objects.requireNonNullElse(piece.getProductId(), "")));
+                }
+            }
+
+            List<PersonaPieceTintData> tints = new ArrayList<>();
+            if (data.getPieceTintColors() != null) {
+                for (BedrockClientData.PieceTintColor tint : data.getPieceTintColors()) {
+                    // The protocol carries exactly four colours per piece; unused ones are sent as zero.
+                    List<Color> colours = new ArrayList<>(4);
+                    for (int i = 0; i < 4; i++) {
+                        colours.add(argb(tint.getColors() != null && i < tint.getColors().size() ? tint.getColors().get(i) : null));
+                    }
+                    tints.add(new PersonaPieceTintData(personaPieceType(tint.getPieceType()), colours));
+                }
+            }
+
+            byte[] engineVersion = data.getGeometryDataEngineVersion();
+            byte[] animationData = data.getSkinAnimationData();
+            byte[] capeData = data.getCapeData();
+            return SerializedSkin.builder()
+                .skinId(data.getSkinId())
+                .playFabId(Objects.requireNonNullElse(data.getPlayFabId(), ""))
+                .skinResourcePatch(new String(data.getGeometryName(), StandardCharsets.UTF_8))
+                .skinData(ImageData.of(data.getSkinImageWidth(), data.getSkinImageHeight(), data.getSkinData()))
+                .animations(animations)
+                .capeData(capeData == null || capeData.length == 0 ? ImageData.EMPTY : ImageData.of(data.getCapeImageWidth(), data.getCapeImageHeight(), capeData))
+                .geometryData(new String(data.getGeometryData(), StandardCharsets.UTF_8))
+                .geometryDataEngineVersion(engineVersion == null || engineVersion.length == 0 ? data.getGameVersion() : new String(engineVersion, StandardCharsets.UTF_8))
+                .animationData(animationData == null ? "" : new String(animationData, StandardCharsets.UTF_8))
+                .premium(data.isPremiumSkin())
+                .persona(true)
+                .capeOnClassic(data.isCapeOnClassicSkin())
+                .capeId(Objects.requireNonNullElse(data.getCapeId(), ""))
+                .fullSkinId(data.getSkinId())
+                .armSize(Objects.requireNonNullElse(data.getArmSize(), "wide"))
+                .skinColor(Objects.requireNonNullElse(data.getSkinColor(), "#0"))
+                .color(argb(data.getSkinColor()))
+                .personaPieces(pieces)
+                .tintColors(tints)
+                .overridingPlayerAppearance(true)
+                .trusted(true)
+                .profileHash("")
+                .build();
+        } catch (Exception e) {
+            GeyserImpl.getInstance().getLogger().debug("Could not build the persona skin of " + data.getUsername() + ": " + e);
+            return null;
+        }
+    }
+
+    private static PersonaPieceType personaPieceType(String name) {
+        try {
+            return PersonaPieceType.fromName(name);
+        } catch (IllegalArgumentException e) {
+            return PersonaPieceType.UNSUPPORTED;
+        }
+    }
+
+    /**
+     * Parses a persona colour such as "#ffa12722" (ARGB). Anything else is transparent.
+     */
+    private static Color argb(@Nullable String hex) {
+        if (hex == null || !hex.startsWith("#")) {
+            return new Color(0, true);
+        }
+        try {
+            return new Color((int) Long.parseLong(hex.substring(1), 16), true);
+        } catch (NumberFormatException e) {
+            return new Color(0, true);
+        }
     }
 
     public static CompletableFuture<GameProfile> resolveProfile(ResolvableProfile profile) {
