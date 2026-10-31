@@ -486,6 +486,8 @@ public class LivingEntity extends Entity implements Tickable {
             MoveEntityDeltaPacket moveEntityPacket = new MoveEntityDeltaPacket();
             moveEntityPacket.getFlags().add(MoveEntityDeltaPacket.Flag.TELEPORTING);
             moveEntityPacket.setRuntimeEntityId(geyserId);
+            // Since 26.40 the ground state is its own field instead of that flag
+            moveEntityPacket.setOnGround(onGround);
             if (onGround) {
                 moveEntityPacket.getFlags().add(MoveEntityDeltaPacket.Flag.ON_GROUND);
             }
@@ -727,7 +729,7 @@ public class LivingEntity extends Entity implements Tickable {
             if (equippable != null) {
                 return slot == equippable.slot() &&
                     canUseSlot(slot) &&
-                    EntityUtils.equipmentUsableByEntity(session, equippable, javaDefinition.type());
+                    EntityUtils.equipmentUsableByEntity(session.javaRegistries(), equippable, javaDefinition);
             } else {
                 return slot == EquipmentSlot.MAIN_HAND && canUseSlot(EquipmentSlot.MAIN_HAND);
             }
@@ -741,7 +743,7 @@ public class LivingEntity extends Entity implements Tickable {
         if (equippable == null) {
             return slot == EquipmentSlot.MAIN_HAND && this.canUseSlot(EquipmentSlot.MAIN_HAND);
         } else {
-            return slot == equippable.slot() && this.canUseSlot(equippable.slot()) && EntityUtils.equipmentUsableByEntity(session, equippable, javaDefinition.type());
+            return slot == equippable.slot() && this.canUseSlot(equippable.slot()) && EntityUtils.equipmentUsableByEntity(session.javaRegistries(), equippable, javaDefinition);
         }
     }
 

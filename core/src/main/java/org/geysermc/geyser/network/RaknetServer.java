@@ -25,6 +25,7 @@
 
 package org.geysermc.geyser.network;
 
+import org.cloudburstmc.netty.util.nethernet.IpRangeSet;
 import org.cloudburstmc.netty.util.nethernet.TrustedProxies;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
@@ -73,6 +74,8 @@ public final class RaknetServer {
     private static final int SHUTDOWN_TIMEOUT_MS = 500;
 
     private final GeyserImpl geyser;
+    /** Parsed once here: a URL entry is fetched on every parse, and a connection is not the time for that. */
+    private final IpRangeSet trustedProxies;
     private EventLoopGroup group;
     // Split childGroup may improve IO
     private EventLoopGroup childGroup;
@@ -91,6 +94,7 @@ public final class RaknetServer {
 
     public RaknetServer(GeyserImpl geyser, int threadCount) {
         this.geyser = geyser;
+        this.trustedProxies = TrustedProxies.parse(geyser.config().advanced().bedrock().haproxyProtocolWhitelistedIps());
         this.listenCount = Bootstraps.isReusePortAvailable() ?  Integer.getInteger("Geyser.ListenCount", 1) : 1;
         GeyserImpl.getInstance().getLogger().debug("Listen thread count: " + listenCount);
         this.group = TRANSPORT.eventLoopGroupFactory().apply(listenCount, new DefaultThreadFactory("GeyserServer", true));
@@ -195,6 +199,8 @@ public final class RaknetServer {
             .channelFactory(RakChannelFactory.server(TRANSPORT.datagramChannelClass()))
             .group(group, childGroup)
             .option(RakChannelOption.RAK_HANDLE_PING, true)
+            // Every supported Bedrock version uses RakNet 11. 7 to 10 compress from the first frame without RequestNetworkSettings
+            .option(RakChannelOption.RAK_SUPPORTED_PROTOCOLS, new int[] {11})
             .option(RakChannelOption.RAK_MAX_MTU, this.geyser.config().advanced().bedrock().mtu())
             .option(RakChannelOption.RAK_PACKET_LIMIT, rakRateLimitingDisabled ? 0 : rakPacketLimit)
             .option(RakChannelOption.RAK_GLOBAL_PACKET_LIMIT, rakGlobalPacketLimit)
@@ -207,7 +213,7 @@ public final class RaknetServer {
     public boolean onConnectionRequest(InetSocketAddress inetSocketAddress, InetSocketAddress clientAddress) {
         List<String> allowedProxyIPs = geyser.config().advanced().bedrock().haproxyProtocolWhitelistedIps();
         if (geyser.config().advanced().bedrock().useHaproxyProtocol() && !allowedProxyIPs.isEmpty()) {
-            if (!TrustedProxies.parse(geyser.config().advanced().bedrock().haproxyProtocolWhitelistedIps()).contains(inetSocketAddress.getAddress())) {
+            if (!this.trustedProxies.contains(inetSocketAddress.getAddress())) {
                 connectionAttempts++;
                 return false;
             }
