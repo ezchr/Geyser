@@ -128,7 +128,7 @@ public class TextDisplayEntity extends DisplayBaseEntity {
     }
 
     public void setText(EntityMetadata<Component, ?> entityMetadata) {
-        this.metadata.put(EntityDataTypes.NAME, MessageTranslator.convertMessage(entityMetadata.getValue(), session.locale()));
+        this.metadata.put(EntityDataTypes.NAME, zidCarryFormats(MessageTranslator.convertMessage(entityMetadata.getValue(), session.locale())));
         int oldLineCount = this.lineCount;
         this.lineCount = calculateLineCount(entityMetadata.getValue());
 
@@ -137,6 +137,46 @@ public class TextDisplayEntity extends DisplayBaseEntity {
             setOffset(calculateLineOffset());
             moveAbsoluteRaw(position, yaw, pitch, headYaw, onGround, false);
         }
+    }
+
+    /**
+     * ZID: makes every line start in the colour and style the line before it ended in. A Bedrock
+     * client starts each line of a name tag plain again, while the Java text display carries the
+     * formatting on: a second line lost its colour and bold for Bedrock players.
+     */
+    static String zidCarryFormats(String tag) {
+        if (tag == null || tag.indexOf('\n') < 0) {
+            return tag;
+        }
+        StringBuilder out = new StringBuilder(tag.length() + 16);
+        String colour = "";
+        StringBuilder styles = new StringBuilder();
+        for (int i = 0; i < tag.length(); i++) {
+            char c = tag.charAt(i);
+            out.append(c);
+            if (c == '\u00a7' && i + 1 < tag.length()) {
+                char code = Character.toLowerCase(tag.charAt(++i));
+                out.append(tag.charAt(i));
+                if (code == 'r') {
+                    colour = "";
+                    styles.setLength(0);
+                } else if (code == 'k' || code == 'l' || code == 'o') {
+                    if (styles.indexOf(String.valueOf(code)) < 0) {
+                        styles.append(code);
+                    }
+                } else {
+                    colour = String.valueOf(code); // a colour keeps the styles on Bedrock
+                }
+            } else if (c == '\n') {
+                if (!colour.isEmpty()) {
+                    out.append('\u00a7').append(colour);
+                }
+                for (int j = 0; j < styles.length(); j++) {
+                    out.append('\u00a7').append(styles.charAt(j));
+                }
+            }
+        }
+        return out.toString();
     }
 
     private int calculateLineCount(@Nullable Component text) {

@@ -543,7 +543,15 @@ public class Entity implements GeyserEntity {
         setSprinting((xd & 0x08) == 0x08);
         // Swimming is ignored here and instead we rely on the pose
         setGliding((xd & 0x80) == 0x80);
-        setInvisible((xd & 0x20) == 0x20);
+        setInvisible((xd & 0x20) == 0x20 && !isZidGubby());
+    }
+
+    /**
+     * ZID: the Java rabbit of a Gubby is hidden by its Java model (BetterModel); Bedrock players draw the Gubby itself.
+     */
+    private boolean isZidGubby() {
+        var identifier = bedrockDefinition.identifier();
+        return identifier.namespace().equals("zid") && identifier.path().startsWith("gubby");
     }
 
     /**

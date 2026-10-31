@@ -143,6 +143,7 @@ public class FakeHeadProvider {
         if (session.getPlayerWithCustomHeads().remove(entity.uuid()) == null) {
             return;
         }
+        SkinManager.noteHeadRestored(entity.uuid()); // ZID: see SkinManager.getSkin
 
         SkinProvider.requestSkinData(entity, session).whenCompleteAsync((skinData, throwable) -> {
             if (throwable != null) {

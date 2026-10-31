@@ -67,6 +67,9 @@ public class JavaLoginFinishedTranslator extends PacketTranslator<ClientboundLog
             // We upload it after we know for sure that the target server
             // is ready to handle the result of the global server.
             session.getGeyser().getSkinUploader().uploadSkin(session);
+        } else if (remoteAuthType == AuthType.FLOODGATE) {
+            // ZID: no uploader without login validation; fetch the skin the relay uploaded instead.
+            org.geysermc.geyser.zid.ZidGlobalSkin.apply(session);
         }
 
         // We no longer need these variables; they're just taking up space in memory now

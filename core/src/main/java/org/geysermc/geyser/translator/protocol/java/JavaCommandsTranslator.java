@@ -242,6 +242,18 @@ public class JavaCommandsTranslator extends PacketTranslator<ClientboundCommands
             // Build the completed command and add it to the final list
             CommandData data = new CommandData(commandName, description, flags, CommandPermission.ANY, aliases, Collections.emptyList(), entry.getKey().paramData());
             commandData.add(data);
+            // ZID-DEBUG: what a Bedrock player is sent for each command (aliases and overloads)
+            if (Boolean.getBoolean("zidCommandDebug")) {
+                StringBuilder sb = new StringBuilder();
+                for (var overload : entry.getKey().paramData()) {
+                    sb.append(" |");
+                    for (var param : overload.getOverloads()) {
+                        sb.append(' ').append(param.getName());
+                        if (param.getEnumData() != null) sb.append('=').append(param.getEnumData().getValues().keySet());
+                    }
+                }
+                session.getGeyser().getLogger().info("[cmd] " + session.bedrockUsername() + " /" + entry.getValue() + sb);
+            }
 
             if (commandName.equals("help")) {
                 helpAdded = true;

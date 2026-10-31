@@ -142,10 +142,34 @@ public class SkinManager {
         }, 100, TimeUnit.MILLISECONDS);
     }
 
+    /** ZID: how many times each player took a worn custom head off; see getSkin. */
+    private static final java.util.Map<UUID, Integer> HEAD_RESTORES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** ZID: called when a worn custom head comes off a player. */
+    public static void noteHeadRestored(UUID uuid) {
+        HEAD_RESTORES.merge(uuid, 1, Integer::sum);
+    }
+
     private static SerializedSkin getSkin(GeyserSession session, UUID uuid, String skinId, Skin skin, Cape cape, SkinGeometry geometry) {
-        SerializedSkin personaSkin = personaSkin(uuid);
+        // ZID: a skin merged with a worn custom head (FakeHeadProvider) must go out as it is: the
+        // persona skin has no head on it, so worn custom heads never showed on persona players.
+        boolean fakeHead = skinId != null && skinId.startsWith("customPlayerHead_");
+        SerializedSkin personaSkin = fakeHead ? null : personaSkin(uuid);
+        // ZID: after a worn custom head comes off, the skin goes out under a new id. Under the id
+        // the client already knew it kept the head's geometry: the head stayed big.
+        Integer restores = fakeHead ? null : HEAD_RESTORES.get(uuid);
+        String suffix = restores == null ? "" : "_zidrestored" + restores;
         if (personaSkin != null) {
-            return personaSkin;
+            if (suffix.isEmpty()) {
+                return personaSkin;
+            }
+            return personaSkin.toBuilder()
+                .skinId(personaSkin.getSkinId() + suffix)
+                .fullSkinId(personaSkin.getFullSkinId() + suffix)
+                .build();
+        }
+        if (skinId != null) {
+            skinId += suffix;
         }
         return SerializedSkin.builder()
             .skinId(skinId)
@@ -343,6 +367,7 @@ public class SkinManager {
             geyser.getLogger().info(GeyserLocale.getLocaleStringLog("geyser.skin.bedrock.register", playerEntity.getUsername(), playerEntity.uuid()));
         }
 
+        org.geysermc.geyser.zid.ZidPersonaDump.dump(playerEntity.getUsername(), clientData);
         try {
             byte[] skinBytes = clientData.getSkinData();
             byte[] capeBytes = clientData.getCapeData();

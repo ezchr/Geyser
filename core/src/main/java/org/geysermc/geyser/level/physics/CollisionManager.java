@@ -216,6 +216,7 @@ public class CollisionManager {
             PlayerEntity playerEntity = session.getPlayerEntity();
             // Client will dismount if on a vehicle
             if (playerEntity.getVehicle() == null && pistonCache.getPlayerMotion().equals(Vector3f.ZERO) && !pistonCache.isPlayerSlimeCollision()) {
+                zidLogPullBack(position, movement, adjustedMovement, onGround, newOnGround);
                 recalculatePosition();
                 return null;
             }
@@ -229,6 +230,22 @@ public class CollisionManager {
         }
 
         return new CollisionResult(position, TriState.byBoolean(onGround));
+    }
+
+    // ZID TEMP: why Bedrock players get pulled back (slabs, swimming under slabs); at most twice a second.
+    private long zidLastPullLog;
+
+    private void zidLogPullBack(Vector3d position, Vector3d movement, Vector3d adjusted, boolean onGround, boolean newOnGround) {
+        long now = System.currentTimeMillis();
+        if (now - zidLastPullLog < 500) {
+            return;
+        }
+        zidLastPullLog = now;
+        session.getGeyser().getLogger().info("ZID pull-back " + session.bedrockUsername() + " at " + position
+            + " move " + movement + " allowed " + adjusted + " onGround " + onGround + "->" + newOnGround
+            + " pose " + session.getPose() + " box " + playerBoundingBox.getSizeX() + "x" + playerBoundingBox.getSizeY()
+            + " block " + session.getGeyser().getWorldManager().blockAt(session, position.toInt()).toString()
+            + " above " + session.getGeyser().getWorldManager().blockAt(session, position.toInt().up(1)).toString());
     }
 
     public void recalculatePosition() {
