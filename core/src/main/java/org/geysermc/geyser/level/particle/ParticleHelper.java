@@ -90,6 +90,24 @@ public final class ParticleHelper {
         return serializeVariable("variable.color", RGB_COLOR, rgb);
     }
 
+    /**
+     * Serializes the colour of a note particle the way Bedrock note blocks do.
+     *
+     * @param note the note divided by 24, as sent by Java in the particle's x velocity
+     */
+    public static JsonElement serializeNoteColor(double note) {
+        double angle = note * Math.PI * 2;
+        return serializeVariable("variable.note_color", MEMBER_ARRAY, List.of(
+            createVariable(".r", FLOAT, noteColorComponent(angle)),
+            createVariable(".g", FLOAT, noteColorComponent(angle + Math.PI * 2 / 3)),
+            createVariable(".b", FLOAT, noteColorComponent(angle + Math.PI * 4 / 3)),
+            createVariable(".a", FLOAT, 1.0F)));
+    }
+
+    private static float noteColorComponent(double angle) {
+        return (float) (Math.sin(angle) * 0.65 + 0.35);
+    }
+
     public interface ValueSerializer<T> {
 
         String type();

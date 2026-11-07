@@ -26,7 +26,10 @@
 package org.geysermc.geyser.translator.protocol.java.level;
 
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SpawnParticleEffectPacket;
+import org.geysermc.geyser.level.particle.ParticleHelper;
 import org.geysermc.mcprotocollib.protocol.data.game.level.particle.Particle;
+import org.geysermc.mcprotocollib.protocol.data.game.level.particle.ParticleType;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.level.ClientboundLevelParticlesPacket;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.geysermc.geyser.registry.Registries;
@@ -35,6 +38,7 @@ import org.geysermc.geyser.session.GeyserSession;
 import org.geysermc.geyser.translator.protocol.PacketTranslator;
 import org.geysermc.geyser.translator.protocol.Translator;
 
+import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Function;
@@ -53,7 +57,7 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
             if (packet.getAmount() == 0) {
                 // 0 means don't apply the offset
                 Vector3f position = Vector3f.from(packet.getX(), packet.getY(), packet.getZ());
-                session.sendUpstreamPacket(packetConstructor.apply(position));
+                sendParticle(session, particle, packetConstructor.apply(position), packet.getOffsetX() * packet.getXMaxSpeed());
             } else {
                 Random random = ThreadLocalRandom.current();
                 int amount = Math.min(MAX_PARTICLES, packet.getAmount());
@@ -63,12 +67,20 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
                     double offsetZ = random.nextGaussian() * (double) packet.getOffsetZ();
                     Vector3f position = Vector3f.from(packet.getX() + offsetX, packet.getY() + offsetY, packet.getZ() + offsetZ);
 
-                    session.sendUpstreamPacket(packetConstructor.apply(position));
+                    sendParticle(session, particle, packetConstructor.apply(position), random.nextGaussian() * packet.getXMaxSpeed());
                 }
             }
         } else {
             // Null is only returned when no particle of this type is found
             session.getGeyser().getLogger().debug("Unhandled particle packet: " + packet);
         }
+    }
+
+    private static void sendParticle(GeyserSession session, Particle particle, BedrockPacket bedrockPacket, double velocityX) {
+        // Java uses the x velocity of a note particle as its colour
+        if (particle.getType() == ParticleType.NOTE && bedrockPacket instanceof SpawnParticleEffectPacket effectPacket) {
+            effectPacket.setMolangVariablesJson(Optional.of(ParticleHelper.serializeNoteColor(velocityX).toString()));
+        }
+        session.sendUpstreamPacket(bedrockPacket);
     }
 }
