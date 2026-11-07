@@ -97,6 +97,7 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
               "_help": "Bedrock particle limits, applied within 2 seconds of saving (no restart). default = every particle, burst = emitter/level-event ones, particles = single Java particle types. gap_ms = minimum time between puffs from one spot, cell = spot size in blocks, count_percent = share of the Java count kept (at least 1), max_count = cap per puff (0 = none).",
               "default": {"gap_ms": 250, "cell": 1, "count_percent": 25, "max_count": 0},
               "burst": {"gap_ms": 500, "cell": 1, "count_percent": 100, "max_count": 1},
+              "bedrock_ids": {},
               "particles": {
                 "TRIAL_SPAWNER_DETECTED_PLAYER": {"gap_ms": 600, "cell": 3, "max_count": 1},
                 "TRIAL_SPAWNER_DETECTED_PLAYER_OMINOUS": {"gap_ms": 600, "cell": 3, "max_count": 1},
@@ -107,6 +108,8 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
     private static volatile Limit DEFAULT_LIMIT = new Limit(250, 1, 25, 0);
     private static volatile Limit BURST_LIMIT = new Limit(500, 1, 100, 1);
     private static volatile java.util.Map<String, Limit> TYPE_LIMITS = java.util.Map.of();
+    /** zid_particles.json "bedrock_ids": Java particle type -> the Bedrock effect sent by name instead of Geyser's mapping. */
+    private static volatile java.util.Map<String, String> BEDROCK_IDS = java.util.Map.of();
     private static volatile long limitsCheckedAt;
     private static volatile long limitsModified = -1;
 
@@ -130,9 +133,17 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
                     types.put(e.getKey().toUpperCase(java.util.Locale.ROOT), (e.getValue().isJsonObject() ? def : def).with(e.getValue().getAsJsonObject()));
                 }
             }
+            java.util.Map<String, String> ids = new java.util.HashMap<>();
+            com.google.gson.JsonObject named = o.getAsJsonObject("bedrock_ids");
+            if (named != null) {
+                for (var e : named.entrySet()) {
+                    if (e.getValue().isJsonPrimitive()) ids.put(e.getKey().toUpperCase(java.util.Locale.ROOT), e.getValue().getAsString());
+                }
+            }
             DEFAULT_LIMIT = def;
             BURST_LIMIT = burst;
             TYPE_LIMITS = types;
+            BEDROCK_IDS = ids;
             org.geysermc.geyser.GeyserImpl.getInstance().getLogger().info("Particle limits loaded from zid_particles.json (" + types.size() + " particle overrides)");
         } catch (Exception e) {
             org.geysermc.geyser.GeyserImpl.getInstance().getLogger().warning("zid_particles.json not applied: " + e.getMessage());
@@ -164,8 +175,12 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
         }
     }
 
+    /** The note being translated: Java's colour-wheel fraction (offsetX * speed when the count is 0, else 0). */
+    private static final ThreadLocal<Float> NOTE_TURN = ThreadLocal.withInitial(() -> 0f);
+
     @Override
     public void translate(GeyserSession session, ClientboundLevelParticlesPacket packet) {
+        NOTE_TURN.set(packet.getAmount() == 0 ? packet.getOffsetX() * packet.getXMaxSpeed() : 0f);
         Function<Vector3f, BedrockPacket> particleCreateFunction = createParticle(session, packet.getParticle());
         if (particleCreateFunction != null) {
             if (!spotFree(session, packet.getParticle(), packet.getX(), packet.getY(), packet.getZ(), isBurst(packet.getParticle()))) {
@@ -204,7 +219,34 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
      * with different offsets.
      */
     public static @Nullable Function<Vector3f, BedrockPacket> createParticle(GeyserSession session, Particle particle) {
+        String bedrockId = BEDROCK_IDS.get(particle.getType().name());
+        if (bedrockId != null) { // a named Bedrock effect, as a Bedrock server's /particle sends it
+            int dimensionId = DimensionUtils.javaToBedrock(session);
+            return (position) -> {
+                SpawnParticleEffectPacket named = new SpawnParticleEffectPacket();
+                named.setIdentifier(bedrockId);
+                named.setDimensionId(dimensionId);
+                named.setPosition(position);
+                named.setMolangVariablesJson(Optional.empty());
+                return named;
+            };
+        }
         switch (particle.getType()) {
+            case NOTE -> {
+                // Vanilla note blocks: note_color = sin(a + k * 2pi/3) * 0.65 + 0.35 for r, g, b, a = pitch * 2pi/24.
+                double angle = NOTE_TURN.get() * Math.PI * 2;
+                String molang = noteMolang((float) (Math.sin(angle) * 0.65 + 0.35),
+                        (float) (Math.sin(angle + 2.0943952) * 0.65 + 0.35), (float) (Math.sin(angle + 4.1887903) * 0.65 + 0.35));
+                int dimensionId = DimensionUtils.javaToBedrock(session);
+                return (position) -> {
+                    SpawnParticleEffectPacket note = new SpawnParticleEffectPacket();
+                    note.setIdentifier("minecraft:note_particle");
+                    note.setDimensionId(dimensionId);
+                    note.setPosition(position);
+                    note.setMolangVariablesJson(Optional.of(molang));
+                    return note;
+                };
+            }
             case BLOCK -> {
                 int blockState = session.getBlockMappings().getBedrockBlockId(((BlockParticleData) particle.getData()).getBlockState());
                 return (position) -> {
@@ -413,10 +455,19 @@ public class JavaLevelParticlesTranslator extends PacketTranslator<ClientboundLe
 
     /** A Java particle Geyser shows as a Bedrock emitter or level event: one packet is a burst. */
     private static boolean isBurst(Particle particle) {
+        String bedrockId = BEDROCK_IDS.get(particle.getType().name());
+        if (bedrockId != null) return bedrockId.contains("emitter");
+        if (particle.getType() == org.geysermc.mcprotocollib.protocol.data.game.level.particle.ParticleType.NOTE) return false;
         ParticleMapping mapping = Registries.PARTICLES.get(particle.getType());
         if (mapping == null) return false;
         if (mapping.levelEventType() != null) return true;
         return mapping.identifier() != null && mapping.identifier().contains("emitter");
+    }
+
+    private static String noteMolang(float red, float green, float blue) {
+        return "[{ \"name\": \"variable.note_color\", \"value\": { \"type\": \"member_array\", \"value\": [{\"name\": \".r\", \"value\": { \"type\": \"float\", \"value\": " + red
+                + "}},{\"name\": \".g\", \"value\": {\"type\": \"float\", \"value\": " + green + "}},{\"name\": \".b\", \"value\": {\"type\": \"float\", \"value\": " + blue
+                + "}},{\"name\": \".a\", \"value\": {\"type\": \"float\", \"value\": 1.0}}]}}]";
     }
 
     private static String colorMolang(float red, float green, float blue) {
