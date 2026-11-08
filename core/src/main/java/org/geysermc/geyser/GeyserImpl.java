@@ -174,6 +174,7 @@ public class GeyserImpl implements GeyserApi, EventRegistrar {
 
     private RaknetServer geyserServer;
     private NetherNetServer netherNetServer;
+    private org.geysermc.geyser.network.bedrock.tcp.TcpServer tcpServer;
     private final GeyserBootstrap bootstrap;
 
     private final GeyserEventBus eventBus;
@@ -533,6 +534,21 @@ public class GeyserImpl implements GeyserApi, EventRegistrar {
             logger.error(" /     o     \\  on how to enable NetherNet support.");
             logger.error("/_____________\\");
         }
+        // A TCP listener for a proxy on the same machine (Beacon's "tcp" transport), off unless its address is given
+        String tcpAddress = System.getProperty(org.geysermc.geyser.network.bedrock.tcp.TcpServer.ADDRESS_PROPERTY, "").trim();
+        this.tcpServer = null;
+        if (!tcpAddress.isEmpty()) {
+            int colon = tcpAddress.lastIndexOf(':');
+            try {
+                java.net.InetSocketAddress address = new java.net.InetSocketAddress(
+                        tcpAddress.substring(0, colon), Integer.parseInt(tcpAddress.substring(colon + 1)));
+                this.tcpServer = new org.geysermc.geyser.network.bedrock.tcp.TcpServer(this);
+                this.tcpServer.start(address);
+            } catch (RuntimeException e) {
+                logger.error("Could not start the Geyser TCP listener on " + tcpAddress, e);
+                this.tcpServer = null;
+            }
+        }
 
         if (config.java().authType() == AuthType.FLOODGATE) {
             try {
@@ -690,6 +706,7 @@ public class GeyserImpl implements GeyserApi, EventRegistrar {
         runIfNonNull(scheduledThread, ScheduledExecutorService::shutdown);
         runIfNonNull(scoreboardUpdater, ScoreboardUpdater::shutdown);
         runIfNonNull(netherNetServer, NetherNetServer::shutdown);
+        runIfNonNull(tcpServer, org.geysermc.geyser.network.bedrock.tcp.TcpServer::shutdown);
         runIfNonNull(geyserServer, RaknetServer::shutdown);
         SkinProvider.shutdown();
         runIfNonNull(skinUploader, FloodgateSkinUploader::close);

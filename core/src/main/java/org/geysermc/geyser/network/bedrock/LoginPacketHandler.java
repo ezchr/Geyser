@@ -28,10 +28,12 @@ package org.geysermc.geyser.network.bedrock;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import io.netty.buffer.Unpooled;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.compat.BedrockCompat;
 import org.cloudburstmc.protocol.bedrock.data.PacketCompressionAlgorithm;
 import org.cloudburstmc.protocol.bedrock.netty.codec.compression.CompressionStrategy;
+import org.cloudburstmc.protocol.bedrock.netty.codec.compression.NoopCompression;
 import org.cloudburstmc.protocol.bedrock.netty.codec.compression.SimpleCompressionStrategy;
 import org.cloudburstmc.protocol.bedrock.netty.codec.compression.ZlibCompression;
 import org.cloudburstmc.protocol.bedrock.netty.codec.encryption.BedrockEncryptionDecoder;
@@ -41,8 +43,10 @@ import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestNetworkSettingsPacket;
+import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket;
 import org.cloudburstmc.protocol.common.PacketSignal;
 import org.cloudburstmc.protocol.common.util.Zlib;
+import org.geysermc.geyser.network.bedrock.tcp.TcpServer;
 import org.geysermc.geyser.Constants;
 import org.geysermc.geyser.GeyserImpl;
 import org.geysermc.geyser.api.event.bedrock.SessionInitializeEvent;
@@ -61,6 +65,7 @@ import java.util.OptionalInt;
  */
 public class LoginPacketHandler extends LoggingPacketHandler {
     private static final String ENCRYPTED_INPUT_MARKER = "geyser-encrypted-input-marker";
+    private static final int NETWORK_SETTINGS_ID = 143;
 
     private final CompressionStrategy compressionStrategy;
     private Stage stage = Stage.NETWORK_SETTINGS;
@@ -131,6 +136,23 @@ public class LoginPacketHandler extends LoggingPacketHandler {
     @Override
     public PacketSignal handle(RequestNetworkSettingsPacket packet) {
         if (!setCorrectCodec(packet.getProtocolVersion())) {
+            return PacketSignal.HANDLED;
+        }
+
+        if (TcpServer.noCompression(session.getUpstream().getSession().getPeer().getChannel())) {
+            // A proxy on the same machine asked for no compression (see TcpServer). Cloudburst writes the algorithm
+            // as its enum ordinal, which is not the protocol's 0xffff for none, so the packet is written here.
+            UnknownPacket settings = new UnknownPacket();
+            settings.setPacketId(NETWORK_SETTINGS_ID);
+            settings.setPayload(Unpooled.buffer(10)
+                    .writeShortLE(0) // compression threshold
+                    .writeShortLE(0xffff) // no compression
+                    .writeBoolean(false) // client throttle
+                    .writeByte(0)
+                    .writeFloatLE(0));
+            session.sendUpstreamPacketImmediately(settings);
+            session.getUpstream().getSession().getPeer().setCompression(new SimpleCompressionStrategy(new NoopCompression()));
+            stage = Stage.LOGIN;
             return PacketSignal.HANDLED;
         }
 

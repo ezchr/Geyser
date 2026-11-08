@@ -40,6 +40,7 @@ import org.geysermc.cumulus.form.SimpleForm;
 import org.geysermc.cumulus.response.SimpleFormResponse;
 import org.geysermc.cumulus.response.result.FormResponseResult;
 import org.geysermc.cumulus.response.result.ValidFormResponseResult;
+import org.geysermc.geyser.network.bedrock.tcp.TcpServer;
 import org.geysermc.geyser.GeyserImpl;
 import org.geysermc.geyser.network.bedrock.CodecProcessor;
 import org.cloudburstmc.netty.util.nethernet.TransportIdentityBinding;
@@ -167,6 +168,10 @@ public class LoginEncryptionUtils {
         if (session.getUpstream().getSession().getPeer() instanceof NetherNetPeer) {
             // The data channel is already encrypted by DTLS, so the peer ignores an encryption key.
             // Sending the handshake anyway would have the client encrypt what the server cannot read.
+            return false;
+        }
+        if (TcpServer.noEncryption(session.getUpstream().getSession().getPeer().getChannel())) {
+            // A proxy on the same machine asked for no encryption (see TcpServer)
             return false;
         }
 
