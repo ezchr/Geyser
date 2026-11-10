@@ -63,9 +63,11 @@ import org.geysermc.mcprotocollib.protocol.packet.ingame.clientbound.Clientbound
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.geysermc.geyser.inventory.recipe.RecipeUtil.CARTOGRAPHY_RECIPES;
@@ -105,7 +107,14 @@ public class JavaUpdateRecipesTranslator extends PacketTranslator<ClientboundUpd
             craftingDataPacket.setCleanRecipes(true);
             craftingDataPacket.getMultiData().addAll(CARTOGRAPHY_RECIPES);
 
+            // The map has one entry per Bedrock recipe net id, so a recipe with k input combinations is in it k
+            // times, and asRecipeData gives all k combinations each time: without this, k*k recipes per Java recipe
+            // (tens of MB uncompressed after a reload, more than a proxy accepts in one batch).
+            Set<GeyserRecipe> sent = Collections.newSetFromMap(new IdentityHashMap<>());
             for (GeyserRecipe recipe : session.getCraftingRecipes().values()) {
+                if (!sent.add(recipe)) {
+                    continue;
+                }
                 if (recipe instanceof GeyserShapedRecipe shapedRecipe) {
                     craftingDataPacket.getShapedData().addAll(shapedRecipe.asRecipeData(session));
                 } else if (recipe instanceof GeyserShapelessRecipe shapelessRecipe) {
